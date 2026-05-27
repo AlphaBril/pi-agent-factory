@@ -1,0 +1,8 @@
+sic-pipeline:
+  - foreman
+  - scribe
+  - scout
+  - mason
+  - inspector
+  - auditor
+  - clerk

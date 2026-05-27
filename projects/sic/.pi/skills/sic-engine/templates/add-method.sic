@@ -1,0 +1,32 @@
+TASK: add_method
+
+TARGET: [directory path]
+
+CREATE: [none — modifying existing file]
+
+PURPOSE: [what this method does]
+
+PARAMS:
+- [method parameters]
+
+PUBLIC_METHODS:
+- [methodName]() — [description]
+
+BEHAVIOR:
+- [step 1]
+- [step 2]
+- [step N]
+
+CONSTRAINTS:
+- follow lint rules
+- follow existing methods' style in the same file
+- no refactoring existing code
+- no changing existing method signatures
+- no unrelated edits
+- no new files
+
+DONE_WHEN:
+- lint passes
+- types pass
+- existing tests still pass
+- new method is callable from outside the class

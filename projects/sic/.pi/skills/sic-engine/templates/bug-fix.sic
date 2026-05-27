@@ -1,0 +1,29 @@
+TASK: fix_bug
+
+TARGET: [file path]
+
+CREATE: [none — fixing existing code]
+
+PURPOSE: Fix [describe the bug in one sentence]
+
+BEHAVIOR:
+- identify root cause in [specific function/line]
+- apply minimal fix: [describe the fix]
+- verify fix handles the edge case: [describe edge case]
+- ensure no regression in existing behavior
+
+CONSTRAINTS:
+- MINIMAL change — fix the bug, nothing else
+- no refactoring
+- no "while I'm here" improvements
+- no new abstractions
+- no changing function signatures
+- no moving code between files
+- preserve exact whitespace/formatting around the fix
+
+DONE_WHEN:
+- bug is fixed (describe how to verify)
+- lint passes
+- types pass
+- existing tests pass
+- no unrelated files changed

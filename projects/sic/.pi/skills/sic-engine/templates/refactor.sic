@@ -1,0 +1,29 @@
+TASK: refactor
+
+TARGET: [directory or file path]
+
+CREATE: [new files if splitting, or none]
+
+PURPOSE: [what this refactor achieves — must be a concrete improvement, not "clean up"]
+
+BEHAVIOR:
+- [step 1: specific mechanical transformation]
+- [step 2: what moves where]
+- [step 3: how references are updated]
+- update all imports that reference moved code
+- update barrel/index exports
+
+CONSTRAINTS:
+- NO behavior changes — pure mechanical restructuring
+- all existing tests must pass without modification
+- no new features smuggled in
+- no renaming unless specified
+- every moved piece must have a clear destination
+- if in doubt about where something goes, ASK
+
+DONE_WHEN:
+- lint passes
+- types pass
+- ALL existing tests pass (not just targeted ones)
+- no behavior change (same public API)
+- git diff shows only moves/renames, no logic changes
