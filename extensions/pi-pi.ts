@@ -239,14 +239,16 @@ export default function (pi: ExtensionAPI) {
 		expertName: string,
 		question: string,
 		ctx: any,
-	): Promise<{ output: string; exitCode: number; elapsed: number }> {
+	): Promise<{ output: string; exitCode: number; elapsed: number; errorDetail?: string }> {
 		const key = expertName.toLowerCase();
 		const state = experts.get(key);
 		if (!state) {
+			const available = Array.from(experts.values()).map(s => s.def.name).join(", ");
 			return Promise.resolve({
-				output: `Expert "${expertName}" not found. Available: ${Array.from(experts.values()).map(s => s.def.name).join(", ")}`,
+				output: `Expert "${expertName}" not found. Available: ${available}`,
 				exitCode: 1,
 				elapsed: 0,
+				errorDetail: `Expert "${expertName}" not found. Available experts: ${available}`,
 			});
 		}
 
@@ -255,6 +257,7 @@ export default function (pi: ExtensionAPI) {
 				output: `Expert "${displayName(state.def.name)}" is already researching. Wait for it to finish.`,
 				exitCode: 1,
 				elapsed: 0,
+				errorDetail: `Expert "${displayName(state.def.name)}" is already researching. Wait for it to finish.`,
 			});
 		}
 
@@ -288,6 +291,7 @@ export default function (pi: ExtensionAPI) {
 		];
 
 		const textChunks: string[] = [];
+		const stderrChunks: string[] = [];
 
 		return new Promise((resolve) => {
 			const proc = spawn("pi", args, {
@@ -321,7 +325,9 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			proc.stderr!.setEncoding("utf-8");
-			proc.stderr!.on("data", () => {});
+			proc.stderr!.on("data", (chunk: string) => {
+				stderrChunks.push(chunk);
+			});
 
 			proc.on("close", (code) => {
 				if (buffer.trim()) {
@@ -339,7 +345,14 @@ export default function (pi: ExtensionAPI) {
 				state.status = code === 0 ? "done" : "error";
 
 				const full = textChunks.join("");
+				const stderr = stderrChunks.join("");
 				state.lastLine = full.split("\n").filter((l: string) => l.trim()).pop() || "";
+
+				// If error and no stdout output, show stderr in the widget
+				if (state.status === "error" && !state.lastLine && stderr) {
+					state.lastLine = stderr.split("\n").filter((l: string) => l.trim()).pop() || "";
+				}
+
 				updateWidget();
 
 				ctx.ui.notify(
@@ -347,22 +360,42 @@ export default function (pi: ExtensionAPI) {
 					state.status === "done" ? "success" : "error"
 				);
 
+				// Build error detail from all available sources
+				let errorDetail = "";
+				if (code !== 0) {
+					const parts: string[] = [];
+					if (stderr.trim()) parts.push(`stderr:\n${stderr.trim()}`);
+					if (full.trim()) parts.push(`stdout:\n${full.trim()}`);
+					if (parts.length === 0) parts.push(`Process exited with code ${code} (no output captured)`);
+					errorDetail = parts.join("\n\n");
+				}
+
 				resolve({
-					output: full,
+					output: full || (stderr ? `[no stdout]\n\nstderr:\n${stderr}` : ""),
 					exitCode: code ?? 1,
 					elapsed: state.elapsed,
+					errorDetail,
 				});
 			});
 
 			proc.on("error", (err) => {
 				clearInterval(state.timer);
 				state.status = "error";
-				state.lastLine = `Error: ${err.message}`;
+				state.elapsed = Date.now() - startTime;
+				const stderr = stderrChunks.join("");
+				state.lastLine = `Spawn error: ${err.message}`;
 				updateWidget();
+
+				const errorDetail = [
+					`Spawn error: ${err.message}`,
+					stderr.trim() ? `stderr:\n${stderr.trim()}` : "",
+				].filter(Boolean).join("\n\n");
+
 				resolve({
 					output: `Error spawning expert: ${err.message}`,
 					exitCode: 1,
 					elapsed: Date.now() - startTime,
+					errorDetail,
 				});
 			});
 		});
@@ -413,7 +446,7 @@ Ask specific questions about what you need to BUILD. Each expert will return doc
 				};
 			}
 
-			const names = queries.map(q => displayName(q.expert)).join(", ");
+	        const names = queries.map(q => displayName(q.expert)).join(", ");
 			if (onUpdate) {
 				onUpdate({
 					content: [{ type: "text", text: `Querying ${queries.length} experts in parallel: ${names}` }],
@@ -438,6 +471,7 @@ Ask specific questions about what you need to BUILD. Each expert will return doc
 						exitCode: result.exitCode,
 						output: truncated,
 						fullOutput: result.output,
+						errorDetail: result.errorDetail || "",
 					};
 				}),
 			);
@@ -453,13 +487,19 @@ Ask specific questions about what you need to BUILD. Each expert will return doc
 						exitCode: 1,
 						output: `Error: ${(s.reason as any)?.message || s.reason}`,
 						fullOutput: "",
+						errorDetail: `Promise rejected: ${(s.reason as any)?.message || s.reason}`,
 					},
 			);
 
 			// Build combined response
 			const sections = results.map(r => {
 				const icon = r.status === "done" ? "✓" : "✗";
-				return `## [${icon}] ${displayName(r.expert)} (${Math.round(r.elapsed / 1000)}s)\n\n${r.output}`;
+				const header = `## [${icon}] ${displayName(r.expert)} (${Math.round(r.elapsed / 1000)}s)`;
+				if (r.status === "error") {
+					const errorInfo = r.errorDetail || r.output || "Unknown error (no output captured)";
+					return `${header}\n\n**Error (exit code ${r.exitCode}):**\n\`\`\`\n${errorInfo}\n\`\`\``;
+				}
+				return `${header}\n\n${r.output}`;
 			});
 
 			return {
@@ -503,14 +543,32 @@ Ask specific questions about what you need to BUILD. Each expert will return doc
 				const icon = r.status === "done" ? "✓" : "✗";
 				const color = r.status === "done" ? "success" : "error";
 				const elapsed = typeof r.elapsed === "number" ? Math.round(r.elapsed / 1000) : 0;
-				return theme.fg(color, `${icon} ${displayName(r.expert)}`) +
+				let line = theme.fg(color, `${icon} ${displayName(r.expert)}`) +
 					theme.fg("dim", ` ${elapsed}s`);
+				// Show brief error inline for failed experts
+				if (r.status === "error" && !options.expanded) {
+					const brief = (r.errorDetail || r.output || "unknown error")
+						.split("\n").filter((l: string) => l.trim())[0] || "";
+					const truncatedBrief = brief.length > 60 ? brief.slice(0, 57) + "..." : brief;
+					if (truncatedBrief) {
+						line += theme.fg("warning", ` → ${truncatedBrief}`);
+					}
+				}
+				return line;
 			});
 
-			const header = lines.join(theme.fg("dim", " · "));
+			const header = lines.join("\n");
 
 			if (options.expanded && details.results) {
 				const expanded = (details.results as any[]).map((r: any) => {
+					if (r.status === "error") {
+						const errorContent = r.errorDetail || r.fullOutput || r.output || "No error details captured";
+						const truncErr = errorContent.length > 4000
+							? errorContent.slice(0, 4000) + "\n... [truncated]"
+							: errorContent;
+						return theme.fg("error", `── ${displayName(r.expert)} (ERROR, exit ${r.exitCode}) ──`) +
+							"\n" + theme.fg("warning", truncErr);
+					}
 					const output = r.fullOutput
 						? (r.fullOutput.length > 4000 ? r.fullOutput.slice(0, 4000) + "\n... [truncated]" : r.fullOutput)
 						: r.output || "";
