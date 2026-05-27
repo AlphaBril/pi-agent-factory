@@ -276,7 +276,7 @@ export default function (pi: ExtensionAPI) {
 
 		const model = ctx.model
 			? `${ctx.model.provider}/${ctx.model.id}`
-			: "openrouter/google/gemini-3-flash-preview";
+			: "eu.anthropic.claude-opus-4-6-v1";
 
 		const args = [
 			"--mode", "json",
@@ -301,6 +301,8 @@ export default function (pi: ExtensionAPI) {
 
 			let buffer = "";
 
+			const rawStdoutLines: string[] = []; // capture ALL stdout lines, even non-JSON
+
 			proc.stdout!.setEncoding("utf-8");
 			proc.stdout!.on("data", (chunk: string) => {
 				buffer += chunk;
@@ -308,6 +310,7 @@ export default function (pi: ExtensionAPI) {
 				buffer = lines.pop() || "";
 				for (const line of lines) {
 					if (!line.trim()) continue;
+					rawStdoutLines.push(line);
 					try {
 						const event = JSON.parse(line);
 						if (event.type === "message_update") {
@@ -320,7 +323,12 @@ export default function (pi: ExtensionAPI) {
 								updateWidget();
 							}
 						}
-					} catch {}
+					} catch {
+						// Non-JSON line (e.g., error messages printed directly)
+						// Track it for error reporting
+						state.lastLine = line;
+						updateWidget();
+					}
 				}
 			});
 
@@ -331,6 +339,7 @@ export default function (pi: ExtensionAPI) {
 
 			proc.on("close", (code) => {
 				if (buffer.trim()) {
+					rawStdoutLines.push(buffer.trim());
 					try {
 						const event = JSON.parse(buffer);
 						if (event.type === "message_update") {
@@ -346,11 +355,18 @@ export default function (pi: ExtensionAPI) {
 
 				const full = textChunks.join("");
 				const stderr = stderrChunks.join("");
+				// Non-JSON lines from stdout (error messages, login prompts, etc.)
+				const nonJsonOutput = rawStdoutLines
+					.filter(l => { try { JSON.parse(l); return false; } catch { return true; } })
+					.join("\n");
+
 				state.lastLine = full.split("\n").filter((l: string) => l.trim()).pop() || "";
 
-				// If error and no stdout output, show stderr in the widget
-				if (state.status === "error" && !state.lastLine && stderr) {
-					state.lastLine = stderr.split("\n").filter((l: string) => l.trim()).pop() || "";
+				// If error and no parsed output, show raw output or stderr in widget
+				if (state.status === "error" && !state.lastLine) {
+					state.lastLine = nonJsonOutput.split("\n").filter((l: string) => l.trim()).pop()
+						|| stderr.split("\n").filter((l: string) => l.trim()).pop()
+						|| `exit code ${code}`;
 				}
 
 				updateWidget();
@@ -360,18 +376,19 @@ export default function (pi: ExtensionAPI) {
 					state.status === "done" ? "success" : "error"
 				);
 
-				// Build error detail from all available sources
+				// Build comprehensive error detail from all sources
 				let errorDetail = "";
 				if (code !== 0) {
 					const parts: string[] = [];
-					if (stderr.trim()) parts.push(`stderr:\n${stderr.trim()}`);
-					if (full.trim()) parts.push(`stdout:\n${full.trim()}`);
+					if (nonJsonOutput.trim()) parts.push(nonJsonOutput.trim());
+					if (stderr.trim()) parts.push(`stderr: ${stderr.trim()}`);
+					if (full.trim()) parts.push(`parsed output: ${full.trim()}`);
 					if (parts.length === 0) parts.push(`Process exited with code ${code} (no output captured)`);
 					errorDetail = parts.join("\n\n");
 				}
 
 				resolve({
-					output: full || (stderr ? `[no stdout]\n\nstderr:\n${stderr}` : ""),
+					output: full || nonJsonOutput || (stderr ? `[stderr] ${stderr}` : ""),
 					exitCode: code ?? 1,
 					elapsed: state.elapsed,
 					errorDetail,
