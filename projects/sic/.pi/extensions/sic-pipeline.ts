@@ -7,12 +7,13 @@
  * - write_file_sic: Write a per-file .sic contract into the session folder
  * - list_session_sics: List all .sic files in the session folder (with dependency order)
  * - read_file_sic: Read a specific .sic contract from the session folder
+ * - resolve_paths: Search for ambiguous file names, show interactive selector if multiple matches
  * - dispatch_agent: Sequential agent dispatch (one at a time)
  */
 import type { ExtensionAPI } from "@anthropic-ai/claude-code";
 import { Type } from "@sinclair/typebox";
 import { resolve, dirname, relative, join } from "node:path";
-import { mkdir, writeFile, readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import { execSync } from "node:child_process";
 
 export default function sicPipeline(pi: ExtensionAPI) {
@@ -66,7 +67,6 @@ Call this ONCE after setting the session objective.`,
     }),
 
     async execute({ name }) {
-      // Sanitize
       const slug = name
         .toLowerCase()
         .replace(/[^a-z0-9-_]/g, "-")
@@ -80,6 +80,141 @@ Call this ONCE after setting the session objective.`,
       sessionName = slug;
 
       return `═══ SESSION FOLDER CREATED ═══\n\nPath: .pi/sessions/${slug}/\n\nThe scribe will write per-file .sic contracts here, mirroring the repo structure.`;
+    },
+  });
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // TOOL: resolve_paths
+  // ════════════════════════════════════════════════════════════════════════════
+
+  pi.registerTool({
+    name: "resolve_paths",
+    description: `Search for files matching a vague or partial name. If multiple matches are found, shows an interactive selector overlay where the user picks the correct file using arrow keys.
+
+Use this when the user mentions a file by partial name (e.g., "helpers.ts", "the controller", "auth middleware") and you need to resolve it to an exact path.
+
+Returns the user's selected path, or the single match if unambiguous.`,
+
+    parameters: Type.Object({
+      query: Type.String({
+        description: "The file name or pattern to search for (e.g., 'helpers.ts', '*auth*controller*')",
+      }),
+      label: Type.Optional(Type.String({
+        description: "Optional label shown in the selector (e.g., 'Which helpers file?'). Defaults to the query.",
+      })),
+    }),
+
+    async execute({ query, label }, { abortSignal, context }) {
+      // Search for matching files, excluding node_modules, .git, dist, build
+      const pattern = query.includes("*") ? query : `*${query}*`;
+      let findCmd = `find . -type f -name "${pattern}" -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" -not -path "*/.pi/sessions/*" | sort`;
+
+      let output: string;
+      try {
+        output = execSync(findCmd, { encoding: "utf8", cwd: process.cwd(), timeout: 10000 }).trim();
+      } catch {
+        return `No files found matching "${query}"`;
+      }
+
+      if (!output) {
+        // Try broader search without the glob wrapper
+        try {
+          findCmd = `find . -type f -name "${query}" -not -path "*/node_modules/*" -not -path "*/.git/*" | sort`;
+          output = execSync(findCmd, { encoding: "utf8", cwd: process.cwd(), timeout: 10000 }).trim();
+        } catch {
+          return `No files found matching "${query}"`;
+        }
+      }
+
+      if (!output) {
+        return `No files found matching "${query}". Ask the user for a more specific path.`;
+      }
+
+      const matches = output.split("\n").filter(Boolean).map(p => p.replace(/^\.\//, ""));
+
+      // Single match — return it directly
+      if (matches.length === 1) {
+        return `✓ Resolved: ${matches[0]}`;
+      }
+
+      // Multiple matches — show interactive SelectList overlay
+      const { SelectList, Container, Text } = await import("@mariozechner/pi-tui");
+      const { DynamicBorder } = await import("@mariozechner/pi-coding-agent");
+
+      const items = matches.map((path, i) => ({
+        value: path,
+        label: path,
+        description: dirname(path),
+      }));
+
+      const title = label || `Which file for "${query}"?`;
+
+      const selected: string | null = await new Promise((resolvePromise) => {
+        context.ui.custom((tui: any, theme: any, _kb: any, done: (val: any) => void) => {
+          const container = new Container();
+
+          // Top border
+          container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+
+          // Title
+          container.addChild(new Text(
+            theme.fg("accent", theme.bold(` 📂 ${title}`)),
+            1, 0
+          ));
+          container.addChild(new Text(
+            theme.fg("dim", `  ${matches.length} matches found`),
+            1, 0
+          ));
+
+          // SelectList
+          const selectList = new SelectList(
+            items,
+            Math.min(items.length, 15),
+            {
+              selectedPrefix: (t: string) => theme.fg("accent", t),
+              selectedText: (t: string) => theme.fg("accent", t),
+              description: (t: string) => theme.fg("dim", t),
+              scrollInfo: (t: string) => theme.fg("muted", t),
+              noMatch: (t: string) => theme.fg("warning", t),
+            }
+          );
+
+          selectList.onSelect = (item: any) => {
+            done(item.value);
+            resolvePromise(item.value);
+          };
+          selectList.onCancel = () => {
+            done(null);
+            resolvePromise(null);
+          };
+
+          container.addChild(selectList);
+
+          // Help text
+          container.addChild(new Text(
+            theme.fg("dim", "  ↑↓ navigate • enter select • esc cancel"),
+            1, 0
+          ));
+
+          // Bottom border
+          container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+
+          return {
+            render: (w: number) => container.render(w),
+            invalidate: () => container.invalidate(),
+            handleInput: (data: string) => {
+              selectList.handleInput(data);
+              tui.requestRender();
+            },
+          };
+        }, { overlay: true });
+      });
+
+      if (selected) {
+        return `✓ User selected: ${selected}`;
+      } else {
+        return `✗ User cancelled selection for "${query}". Ask for clarification.`;
+      }
     },
   });
 
@@ -112,15 +247,11 @@ Each .sic describes modifications to EXACTLY ONE file. The mason reads them one 
         return "ERROR: No session folder created. Call create_session_folder first.";
       }
 
-      // Convert target file path to .sic path
-      // e.g., "libs/front/tools/helpers.ts" → "libs/front/tools/helpers.sic"
       const sicPath = target_file.replace(/\.[^.]+$/, ".sic");
       const fullPath = resolve(sessionFolder, sicPath);
 
-      // Create parent directories
       await mkdir(dirname(fullPath), { recursive: true });
 
-      // Add metadata header
       const timestamp = new Date().toISOString();
       const header = `# SIC for: ${target_file}\n# Session: ${sessionName}\n# Created: ${timestamp}\n# Objective: ${sessionObjective || "not set"}\n\n`;
       const content = header + contract + "\n";
@@ -140,7 +271,7 @@ Each .sic describes modifications to EXACTLY ONE file. The mason reads them one 
     name: "list_session_sics",
     description: `List all .sic files in the current session folder.
 
-Returns them in dependency order (based on DEPENDS_ON fields). Files with no dependencies come first, files that depend on others come after their dependencies.
+Returns them in dependency order (based on DEPENDS_ON fields). Files with no dependencies come first.
 
 Use this to know which contracts exist and in what order the mason should process them.`,
 
@@ -151,21 +282,18 @@ Use this to know which contracts exist and in what order the mason should proces
         return "ERROR: No session folder. Call create_session_folder first.";
       }
 
-      // Recursively find all .sic files
       const sicFiles = await findFiles(sessionFolder, ".sic");
 
       if (sicFiles.length === 0) {
         return "No .sic files found in session folder. The scribe hasn't written contracts yet.";
       }
 
-      // Read each file and parse DEPENDS_ON for ordering
       const contracts: { path: string; relativePath: string; dependsOn: string[] }[] = [];
 
       for (const filePath of sicFiles) {
         const content = await readFile(filePath, "utf8");
         const relativePath = relative(sessionFolder, filePath);
 
-        // Parse DEPENDS_ON field
         const dependsMatch = content.match(/DEPENDS_ON:\n((?:- .+\n)*)/);
         const dependsOn: string[] = [];
         if (dependsMatch) {
@@ -181,7 +309,6 @@ Use this to know which contracts exist and in what order the mason should proces
         contracts.push({ path: filePath, relativePath, dependsOn });
       }
 
-      // Topological sort by DEPENDS_ON
       const ordered = topologicalSort(contracts);
 
       let output = `═══ SESSION CONTRACTS ═══\n\n`;
@@ -206,13 +333,11 @@ Use this to know which contracts exist and in what order the mason should proces
 
   pi.registerTool({
     name: "read_file_sic",
-    description: `Read a specific .sic contract from the session folder.
-
-Use this to get the full contract content before dispatching the mason for a specific file.`,
+    description: `Read a specific .sic contract from the session folder.`,
 
     parameters: Type.Object({
       sic_path: Type.String({
-        description: "Relative path of the .sic file within the session folder (e.g., 'libs/front/tools/helpers.sic')",
+        description: "Relative path of the .sic file within the session folder",
       }),
     }),
 
@@ -242,7 +367,7 @@ Use this to get the full contract content before dispatching the mason for a spe
 
 Used by the foreman to execute pipeline phases sequentially. CRITICAL: dispatch ONE agent at a time. Never call multiple times in the same turn.
 
-For the mason: dispatch ONCE PER .sic FILE — not all files at once.`,
+For the mason: dispatch ONCE PER .sic FILE.`,
 
     parameters: Type.Object({
       agent: Type.String({
@@ -259,7 +384,6 @@ For the mason: dispatch ONCE PER .sic FILE — not all files at once.`,
         return `ERROR: Invalid agent "${agent}". Valid: ${validAgents.join(", ")}`;
       }
 
-      // Build context preamble
       let fullPrompt = "";
       if (sessionObjective) {
         fullPrompt += `═══ SESSION OBJECTIVE ═══\n${sessionObjective}\n\n`;
@@ -270,7 +394,6 @@ For the mason: dispatch ONCE PER .sic FILE — not all files at once.`,
       fullPrompt += prompt;
 
       try {
-        // Escape for shell
         const escapedPrompt = fullPrompt
           .replace(/\\/g, "\\\\")
           .replace(/"/g, '\\"')
@@ -333,20 +456,16 @@ For the mason: dispatch ONCE PER .sic FILE — not all files at once.`,
     function visit(contract: typeof contracts[0]) {
       if (visited.has(contract.relativePath)) return;
       if (visiting.has(contract.relativePath)) {
-        // Circular dependency — just add it
         sorted.push(contract);
         visited.add(contract.relativePath);
         return;
       }
 
       visiting.add(contract.relativePath);
-
-      // Visit dependencies first
       for (const dep of contract.dependsOn) {
         const depContract = contracts.find(c => c.relativePath === dep);
         if (depContract) visit(depContract);
       }
-
       visiting.delete(contract.relativePath);
       visited.add(contract.relativePath);
       sorted.push(contract);
