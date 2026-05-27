@@ -1,128 +1,104 @@
-# Validation Rules — SIC Engine Harness
+# Validation Rules — SIC Engine Harness (v2)
 
 ## Stage 1: Static Validation
 
 ### Lint Check
-- **Auto-detect order**: package.json scripts → eslintrc → .flake8 → pyproject.toml → Cargo.toml
-- **Commands tried**:
-  - `npm run lint` / `yarn lint` / `pnpm lint`
-  - `npx eslint <files>`
-  - `ruff check <files>`
-  - `flake8 <files>`
-  - `cargo clippy`
-  - `golangci-lint run`
+- **Detection order**: package.json scripts → eslint config → biome.json → pyproject.toml → Cargo.toml → go.mod
+- **CRITICAL**: Detect tool existence FIRST, then run. A non-zero exit code from a detected tool = FAIL, not "not found".
 - **Pass criteria**: Exit code 0, no errors (warnings acceptable)
-- **On failure**: Fix the issue, re-run. Do NOT disable lint rules.
+- **On failure**: Report exact errors with file:line. Do NOT disable lint rules.
 
 ### Type Check
-- **Auto-detect**: tsconfig.json → pyproject.toml (mypy) → Cargo.toml
-- **Commands**:
-  - `npx tsc --noEmit`
-  - `mypy <files>`
-  - `cargo check`
-  - `go vet ./...`
+- **Detection**: tsconfig.json → pyproject.toml (mypy) → Cargo.toml → go.mod
 - **Pass criteria**: Exit code 0
-- **On failure**: Fix types. Do NOT use `any` or `# type: ignore` unless the repo already does.
+- **On failure**: Report exact type errors. Do NOT use `any` or `# type: ignore`.
 
 ### Format Check
-- **Commands**:
-  - `npx prettier --check <files>`
-  - `ruff format --check <files>`
-  - `black --check <files>`
-  - `cargo fmt --check`
-  - `gofmt -l <files>`
+- **Detection**: .prettierrc → biome.json → pyproject.toml (ruff/black) → Cargo.toml → go.mod
 - **Pass criteria**: No formatting differences
-- **On failure**: Run formatter, commit the change.
+- **On failure**: Report which files need formatting. Mason should run formatter.
 
 ## Stage 2: Targeted Tests
 
 ### Test Discovery
-1. Find test files matching the created artifact name
-2. Check common patterns:
-   - `__tests__/<Name>.test.ts`
-   - `<name>.spec.ts`
-   - `test_<name>.py`
-   - `<name>_test.go`
-   - `tests/<name>.rs`
-3. If no specific tests exist, run the full suite for the module
+1. Extract artifact name from the `.sic` file field
+2. Search for test files matching that name
+3. Common patterns: `__tests__/<Name>.test.ts`, `<name>.spec.ts`, `test_<name>.py`, `<name>_test.go`
+4. If no specific tests exist → NOT_FOUND (not a failure)
 
 ### Execution
 - Run ONLY relevant tests first (fast feedback)
-- If relevant tests pass, optionally run broader suite
-- **On failure**: Fix the implementation (NOT the test), re-run
-- **Exception**: If the test is clearly wrong (testing old behavior that the contract changes), report it
+- **On failure**: Report failing test names and assertion messages
+- **Exception**: If the test tests old behavior that the contract explicitly changes, note this
 
 ## Stage 3: Contract Compliance Audit
 
-### Checklist
-For each contract section, verify:
+### Scope Check
+- `git diff --name-only` is TRUTH
+- Every file in git diff MUST have a corresponding .sic contract
+- Every .sic contract MUST have a matching file in git diff
+- Exception: `.pi/sessions/` files are always authorized
 
-| Check | How to verify |
-|-------|---------------|
-| CREATE artifacts exist | `ls` / `find` the specified files |
-| EXTENDS correct base | `grep "extends\|class.*:" <file>` |
-| PARAMS all present | Check constructor/function signature |
-| PUBLIC_METHODS exist | `grep` for each method name |
-| BEHAVIOR followed | Read implementation, verify step order |
-| OVERRIDES implemented | `grep` for override decorator or method |
-| CONSTRAINTS respected | Manual review against each constraint |
-| DONE_WHEN criteria | Run each specified command |
+### Per-File Compliance
+For each `.sic` contract, check against `git diff <file>`:
+- Were all `modifications` applied?
+- Were `new_imports` added?
+- Were `new_exports` added?
+- Were `constraints` respected (no other changes)?
+- Were `location_hints` followed (approximate — within 5 lines is OK)?
 
-### Forbidden Changes Check
-- Run `git diff --name-only` (or equivalent)
-- Compare touched files against contract's CREATE/MODIFY list
-- If ANY file was touched that isn't in the contract → VIOLATION
-- Exception: index/barrel files for exports (if DONE_WHEN requires it)
+### Forbidden Changes
+- New files not in any contract → SCOPE VIOLATION
+- Methods not in `modifications` → SCOPE VIOLATION
+- Refactored existing code → SCOPE VIOLATION
 
-### Scope Creep Detection
-Look for:
-- New files not in CREATE
-- New methods not in PUBLIC_METHODS
-- New dependencies not in DEPENDENCIES
-- Comments that explain "I also..."
-- Refactored existing code
+## Stage 4: Verdict Determination
 
-## Stage 4: Adversarial Review
+### Three-Level Verdict (No Fake Precision)
 
-### Review Prompts
-For each created file, ask:
+| Verdict | Criteria | Action |
+|---------|----------|--------|
+| **PASS** ✅ | All checks pass, no assumptions, no scope violations | Ship it |
+| **NEEDS_REVIEW** ⚠️ | Minor warnings, missing tests, reasonable assumptions | Human reads flagged files |
+| **FAIL** ❌ | Lint/type errors, scope violations, incomplete contracts | Do NOT merge |
 
-1. **Correctness**: Are there bugs? Off-by-one? Null handling? Race conditions?
-2. **Assumptions**: Does this assume something about the base class that isn't guaranteed?
-3. **Complexity**: Is there hidden complexity? Unnecessary indirection?
-4. **Edge cases**: What happens at boundaries? Empty input? Max values?
-5. **Convention drift**: Does anything deviate from sibling file patterns?
+### Decision Logic
 
-### Severity Classification
-- **Critical**: Bug that will cause runtime failure → must fix before reporting
-- **Warning**: Potential issue, uncertain → report in confidence warnings
-- **Note**: Stylistic concern → mention in suggested review
+```
+FAIL if:
+  - Any lint errors (not warnings)
+  - Any type errors
+  - Any test failures
+  - Any scope violations (files changed without contract)
+  - Any incomplete contracts (contract exists but file unchanged)
+  - Multiple assumptions by mason
 
-## Stage 5: Confidence Scoring
+NEEDS_REVIEW if:
+  - Format warnings only
+  - 1-2 mason assumptions (documented with // REVIEW:)
+  - Tests NOT_FOUND (can't verify)
+  - Location drift (change in right area but not exact spot)
+  - Conflicting conventions (scout found both, agent picked one)
 
-### Scoring Rubric
+PASS if:
+  - None of the above
+```
 
-| Score | Meaning | Action |
-|-------|---------|--------|
-| 95-100% | Mechanical implementation, zero ambiguity | Ship it |
-| 80-94% | Correct but minor uncertainties | Ship with noted review areas |
-| 60-79% | Required assumptions, edge cases unclear | Review before shipping |
-| 40-59% | Significant uncertainty | Do NOT ship — clarify with human |
-| 0-39% | Failed implementation | Report blockers, start over |
+### Why Not Percentages?
 
-### Scoring Factors
+Previous versions used a 0-100% score with arbitrary deductions (-15 per lint fail, -20 per violation). Problems:
+- Numbers weren't calibrated against real outcomes
+- Gave false precision ("87% confidence" means nothing actionable)
+- Different projects need different thresholds
 
-| Factor | Weight | Description |
-|--------|--------|-------------|
-| All checks pass | 30% | lint + types + tests + format |
-| Contract compliance | 25% | All sections implemented correctly |
-| Convention match | 20% | Style matches template file |
-| No assumptions made | 15% | Nothing guessed or inferred |
-| Clean diff | 10% | Only specified files touched |
+Three levels map directly to actions: ship, review, or fix. No ambiguity.
 
-### Deductions
-- Each assumption made: -5%
-- Each lint warning (not error): -2%
-- Missing test coverage: -5%
-- File touched outside scope: -15%
-- Pattern invented (not from repo): -10%
+## Stage 5: Suggested Review
+
+For NEEDS_REVIEW verdicts, the clerk identifies specific files for human attention:
+- Files where mason made assumptions
+- Files with conflicting convention choices
+- Files where tests don't exist
+- Files with complex logic changes
+
+Each suggestion includes WHY the human should look at it.

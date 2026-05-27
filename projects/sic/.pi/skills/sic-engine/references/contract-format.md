@@ -1,157 +1,161 @@
-# Structured Implementation Contract — Format Reference
+# Structured Implementation Contract — Format Reference (v2 YAML)
 
-## Required Sections
+## Format
 
-| Section | Required | Type | Description |
-|---------|----------|------|-------------|
-| TASK | ✓ | string | Action verb: implement, create, add, modify, extract, fix |
-| TARGET | ✓ | path | Directory where work happens |
-| CREATE | ✓ | list | Artifact names to create |
-| PURPOSE | ✓ | string | Single sentence of intent |
-| CONSTRAINTS | ✓ | list | Hard rules that must not be violated |
-| DONE_WHEN | ✓ | list | Verifiable acceptance criteria |
+Contracts are **valid YAML** files with a `.sic` extension. This enables standard parsing (no custom regex) and validation via schema.
 
-## Optional Sections
+## Required Fields
 
-| Section | Type | Description |
-|---------|------|-------------|
-| EXTENDS | string | Base class to extend |
-| IMPLEMENTS | list | Interfaces to implement |
-| PARAMS | list | Constructor or function parameters (name: type) |
-| PUBLIC_METHODS | list | API surface to expose |
-| BEHAVIOR | list | Ordered step-by-step logic |
-| OVERRIDES | list | Methods to override from base |
-| PRIVATE_METHODS | list | Internal methods (not part of public API) |
-| DEPENDENCIES | list | Required imports or packages |
-| TESTS | list | Test cases to create |
-| AUTO | boolean | If true, skip confirmation between phases |
+| Field | Type | Description |
+|-------|------|-------------|
+| `file` | string | Exact relative path of the target file |
+| `action` | enum | `create` or `modify` |
+| `purpose` | string | Single sentence: what this contract achieves for this file |
+| `modifications` | list | Specific changes to make (precise, ordered) |
+| `constraints` | list | Hard rules that must not be violated |
+| `done_when` | list | Verifiable acceptance criteria |
 
-## Formatting Rules
+## Optional Fields
 
-1. Section headers are UPPERCASE followed by colon: `SECTION:`
-2. Values can be inline: `TASK: implement_agent`
-3. Or as list items below the header:
-   ```
-   PARAMS:
-   - name: string
-   - age: number
-   ```
-4. List items start with `- ` (dash space)
-5. Type annotations use colon: `name: type`
-6. Descriptions use em-dash: `method() — what it does`
-7. Blank lines between sections are optional but recommended
+| Field | Type | Description |
+|-------|------|-------------|
+| `depends_on` | list | Other `.sic` paths that must complete first |
+| `context` | string | Why this file is being changed (multi-line with `\|`) |
+| `location_hints` | list | Where in the file: line numbers, function names |
+| `new_imports` | list | Import statements to add |
+| `new_exports` | list | Exports to add |
 
-## BEHAVIOR Section Best Practices
+## Example: Modify
 
-BEHAVIOR steps should be:
-- **Ordered** — execute in this exact sequence
-- **Specific** — no vague "handle errors appropriately"
-- **Atomic** — one action per step
-- **Verifiable** — you can check if it was done
+```yaml
+file: libs/front/tools/helpers.ts
+action: modify
+purpose: Add a sum utility function
 
-Good:
-```
-BEHAVIOR:
-- read config from env var DATABASE_URL
-- parse URL into host, port, database, user, password
-- create connection pool with max 10 connections
-- set idle timeout to 30 seconds
-- export pool as default export
-```
+depends_on: []
 
-Bad:
-```
-BEHAVIOR:
-- set up the database connection properly
-- handle all edge cases
-- make it performant
+context: |
+  The objective requires a sum function used by the contract controller.
+  This file already contains other math utilities.
+
+modifications:
+  - Add function sum(a: number, b: number): number that returns a + b
+  - Add sum to the named exports
+
+location_hints:
+  - Add after the last existing exported function (line 42)
+  - Export at the bottom with other exports (line 67)
+
+new_imports: []
+
+new_exports:
+  - sum
+
+constraints:
+  - do not modify existing functions
+  - match neighboring function style (arrow function, no JSDoc)
+  - preserve existing formatting
+  - no default export
+
+done_when:
+  - sum is exported and callable
+  - types pass (npx tsc --noEmit)
+  - existing tests still pass
 ```
 
-## CONSTRAINTS Section
+## Example: Create
 
-Always include these baseline constraints:
+```yaml
+file: src/services/notification.ts
+action: create
+purpose: Notification service that sends emails and push notifications
+
+depends_on: []
+
+context: |
+  New service needed by the user controller.
+  Must follow the same pattern as src/services/email.ts.
+
+modifications:
+  - Create class NotificationService extending BaseService
+  - Implement send(notification) method routing to correct channel
+  - Implement getStatus(id) method checking delivery log
+  - Add named export
+
+location_hints: []
+
+new_imports:
+  - "import { BaseService } from './base'"
+  - "import type { Notification } from '../types'"
+
+new_exports:
+  - NotificationService
+
+constraints:
+  - follow pattern from src/services/email.ts exactly
+  - no external dependencies beyond what's imported
+  - error handling must match sibling services pattern
+  - no console.log
+
+done_when:
+  - lint passes
+  - types pass
+  - exports added to src/services/index.ts
+  - can be instantiated with mock dependencies
 ```
-CONSTRAINTS:
-- follow lint rules
-- follow neighboring file style
-- no new abstractions
-- no refactoring existing code
-- no unrelated edits
+
+## Example: With Dependencies
+
+```yaml
+file: app/api/controller/contract.ts
+action: modify
+purpose: Import and use sum() from helpers at the calculation point
+
+depends_on:
+  - libs/front/tools/helpers.sic
+
+context: |
+  After helpers.sic adds sum(), this file uses it to replace
+  the manual a + b at line 54.
+
+modifications:
+  - Add import for sum from helpers
+  - Replace "const total = a + b" at line 54 with "const total = sum(a, b)"
+
+location_hints:
+  - Import section: after line 3 (last existing import)
+  - Line 54: inside calculateTotal() function
+
+new_imports:
+  - "import { sum } from '@libs/front/tools/helpers'"
+
+new_exports: []
+
+constraints:
+  - do not modify other logic in this controller
+  - preserve existing error handling
+  - do not change function signatures
+
+done_when:
+  - sum is imported and used
+  - types pass
+  - existing behavior unchanged (same output for same input)
 ```
 
-Add specific constraints as needed:
-```
-- no external dependencies
-- max 100 lines
-- no async/await (use callbacks)
-- must be backwards compatible
-- do not modify public API of existing files
-```
+## Validation
 
-## DONE_WHEN Section
+The `write_file_sic` tool validates:
+1. Content is valid YAML (parse without errors)
+2. All required fields are present
+3. `action` is either "create" or "modify"
 
-Must be machine-verifiable where possible:
-```
-DONE_WHEN:
-- lint passes (`npm run lint`)
-- types pass (`npx tsc --noEmit`)
-- tests pass (`npm test -- --testPathPattern=agent`)
-- exports added to index.ts
-- no console.log statements
-```
+Invalid contracts are rejected with an error message.
 
-## Example: Full Contract
+## Why YAML?
 
-```
-TASK: implement_service
-
-TARGET: src/services
-
-CREATE: NotificationService
-
-PURPOSE: Send notifications via email and push channels
-
-EXTENDS: BaseService
-
-IMPLEMENTS:
-- Notifier
-- Configurable
-
-PARAMS:
-- emailClient: EmailClient
-- pushClient: PushClient
-- config: NotificationConfig
-
-PUBLIC_METHODS:
-- send(notification: Notification) — route to correct channel and send
-- getStatus(id: string) — check delivery status
-- retry(id: string) — retry failed notification
-
-BEHAVIOR:
-- validate notification schema on send()
-- determine channel from notification.type
-- call emailClient.send() or pushClient.send()
-- store result in notification log
-- return delivery receipt with ID
-- getStatus queries notification log by ID
-- retry fetches original notification and re-calls send()
-
-OVERRIDES:
-- initialize() — set up email and push clients
-- shutdown() — flush pending notifications
-
-CONSTRAINTS:
-- follow lint rules
-- follow neighboring services style
-- no new abstractions
-- no refactor
-- no external dependencies beyond what's imported
-- error handling must match sibling services pattern
-- no retry loops (single attempt, return failure)
-
-DONE_WHEN:
-- lint passes
-- types pass
-- exports added to src/services/index.ts
-- NotificationService can be instantiated with mock clients
-```
+Previous versions used a bespoke `KEY: value` format requiring custom regex parsing. YAML provides:
+- Standard parsers in every language
+- Native list/string/multiline support
+- Schema validation capability
+- Familiar to developers
+- No ambiguous parsing edge cases

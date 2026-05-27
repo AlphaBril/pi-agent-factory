@@ -1,6 +1,6 @@
 ---
 name: sic-engine
-description: Structured Implementation Contract execution framework. Multi-agent pipeline where a foreman dispatches sequential phases — scribe, scout, mason, inspector, auditor, clerk — to achieve deterministic AI implementation under human architecture. Use when implementing features with strict contracts.
+description: Structured Implementation Contract execution framework v2. Multi-agent pipeline with complexity gating (trivial/simple/complex paths), parallel mason dispatch, YAML contracts, session lifecycle management, and programmatic retry. Human design, AI implement.
 license: MIT
 compatibility: Requires git. Works with any language project.
 metadata:
@@ -10,123 +10,130 @@ metadata:
 allowed-tools: bash read grep find ls
 ---
 
-# SIC Engine — Structured Implementation Contract Framework
+# SIC Engine — Structured Implementation Contract Framework v2
 
 An engineering execution framework where AI acts as a deterministic implementation compiler. Humans own architecture. AI owns syntax.
+
+## What's New in v2
+
+- **Complexity Gate**: Trivial/simple/complex paths — no more full pipeline for "add a function"
+- **YAML Contracts**: Standard format, validated on write, no custom parsing
+- **Parallel Mason**: Independent files process simultaneously (up to 4x faster)
+- **Programmatic Retry**: Failed agents auto-retry with error context injected
+- **Cost/Time Estimation**: See expected cost before confirming pipeline run
+- **Session Cleanup**: `/sic-clean` command to manage accumulated sessions
+- **Simplified Verdict**: PASS / NEEDS_REVIEW / FAIL (no fake percentages)
+- **Reliable Spawning**: Works on NixOS, Bun, and non-standard PATH setups
 
 ## Philosophy
 
 ```
 Developer intent
-  → Structured Implementation Contract
-    → Repository Discovery
-      → Deterministic AI Execution
-        → Validation Harness
-          → Confidence Report
+  → Complexity assessment (trivial? simple? complex?)
+    → Appropriate pipeline path
+      → YAML contracts per file
+        → Parallel execution where possible
+          → Validation + Verdict
 ```
 
 ## Architecture
 
-The pipeline is orchestrated by the **foreman** — a sequential dispatcher that calls 6 phase agents one at a time:
+### Complexity Paths
+
+| Path | When | Agents |
+|------|------|--------|
+| **Trivial** | 1 file, no deps, obvious change | mason → inspector |
+| **Simple** | 1-2 files, clear spec | scribe → mason → inspector |
+| **Complex** | 3+ files, deps, discovery needed | scribe → scout → mason → inspector → auditor → clerk |
+
+### Phase Agents
 
 | # | Agent | Role |
 |---|-------|------|
-| 1 | **scribe** | Converses with human → produces the SIC |
-| 2 | **scout** | Discovers repo conventions at target path |
-| 3 | **mason** | Implements the SIC mechanically |
+| 1 | **scribe** | Converses with human → produces per-file YAML contracts |
+| 2 | **scout** | Discovers repo conventions at target paths |
+| 3 | **mason** | Implements one .sic at a time (parallel for independent files) |
 | 4 | **inspector** | Runs lint, types, format, tests |
 | 5 | **auditor** | Git-based compliance verification |
-| 6 | **clerk** | Produces confidence report |
-
-No parallelism. Each phase waits for the previous to complete.
+| 6 | **clerk** | Produces PASS / NEEDS_REVIEW / FAIL verdict |
 
 ## Quick Start
 
-### Start the full pipeline:
+### Start the pipeline:
 ```
 /sic
 ```
-The foreman will ask: "What are we doing today?"
+The foreman asks "What are we doing today?", assesses complexity, then runs the appropriate path.
 
 ### Write a contract only (no execution):
 ```
-/contract Add a notification service that sends emails and push notifications
+/contract Add a notification service that sends emails
 ```
 
-## Contract Format
+### Clean old sessions:
+```
+/sic-clean 30
+```
+
+## Contract Format (YAML)
 
 See [Contract Format Reference](references/contract-format.md) for full spec.
 
-Example:
-```
-TASK: implement_agent
+```yaml
+file: src/services/notification.ts
+action: create
+purpose: Notification service for email and push
 
-TARGET: brain/agents
+depends_on: []
 
-CREATE:
-- SummarizeAgent
+context: |
+  New service needed by user controller.
 
-PURPOSE: Summarize document vectors
+modifications:
+  - Create class NotificationService extending BaseService
+  - Implement send() routing to correct channel
+  - Implement getStatus() checking delivery log
 
-EXTENDS: BaseAgent
+location_hints: []
 
-PARAMS:
-- title: string
-- path: string
-- vectors: Vector[]
+new_imports:
+  - "import { BaseService } from './base'"
 
-PUBLIC_METHODS:
-- formatContent() — format vectors into readable text
+new_exports:
+  - NotificationService
 
-BEHAVIOR:
-- iterate vectors in reading order
-- extract text from each vector
-- concatenate text respecting totalTokens limit
-- use countTokens() to track token usage
+constraints:
+  - follow neighboring services pattern
+  - no external dependencies
 
-OVERRIDES:
-- computeCompletion()
-
-CONSTRAINTS:
-- follow lint rules
-- follow neighboring agents style
-- no abstractions
-- no refactor
-- no unrelated edits
-
-DONE_WHEN:
-- lint passes
-- types pass
-- exports added to index
+done_when:
+  - lint passes
+  - types pass
+  - exports added to index
 ```
 
-## Contract Files
+## Parallel Execution
 
-Contracts are written to `.sic/<task-name>.sic` in the repo. They serve as:
-- Implementation intent trace
-- Review artifact (what was asked vs what was built)
-- Reproducibility record (same contract → same output)
+When `list_session_sics` identifies independent files (no mutual dependencies), they process simultaneously:
 
-## Validation Scripts
-
-```bash
-# Run the validation harness
-./scripts/validate.sh --path <target-dir> --files <created-files>
-
-# Check contract compliance
-./scripts/compliance-check.sh --contract .sic/<name>.sic --implementation <files>
+```
+Group 1 (parallel): helpers.sic, utils.sic    ← no deps, run together
+Group 2 (sequential): controller.sic           ← depends on group 1
 ```
 
-## Key Principles
+Max concurrency: 4 simultaneous mason dispatches.
 
-1. **Human owns architecture** — AI never makes design decisions
-2. **Discovery before implementation** — AI adapts to the repo, never invents patterns
-3. **Contracts are law** — literal compliance only
-4. **Git is truth** — compliance auditor uses git diff, not claims
-5. **Confidence, not "done"** — every output is a probability, not a boolean
-6. **Trace everything** — contracts in repo, reports in session
+## Validation & Verdict
+
+The clerk produces one of three verdicts:
+
+| Verdict | Meaning | Action |
+|---------|---------|--------|
+| **PASS** ✅ | All checks pass, no assumptions | Ship it |
+| **NEEDS_REVIEW** ⚠️ | Minor warnings, missing tests | Human reads flagged files |
+| **FAIL** ❌ | Errors, violations, incomplete | Do NOT merge |
 
 ## References
 
-- [Contract Format](references/contract-format.md) — full SIC specification
-- [Validation Rules](references/validation-rules.md) — all harness stages and scoring
+- [Contract Format](references/contract-format.md) — full YAML specification
+- [Validation Rules](references/validation-rules.md) — all harness stages and verdict logic

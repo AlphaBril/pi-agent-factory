@@ -1,29 +1,35 @@
-TASK: fix_bug
+file: "[file path]"
+action: modify
+purpose: "Fix [describe the bug in one sentence]"
 
-TARGET: [file path]
+depends_on: []
 
-CREATE: [none — fixing existing code]
+context: |
+  [Describe the bug: what happens, what should happen, where it occurs]
 
-PURPOSE: Fix [describe the bug in one sentence]
+modifications:
+  - "Identify root cause in [specific function/line]"
+  - "Apply minimal fix: [describe the fix]"
+  - "Verify fix handles the edge case: [describe edge case]"
 
-BEHAVIOR:
-- identify root cause in [specific function/line]
-- apply minimal fix: [describe the fix]
-- verify fix handles the edge case: [describe edge case]
-- ensure no regression in existing behavior
+location_hints:
+  - "[function name or line number where the bug exists]"
 
-CONSTRAINTS:
-- MINIMAL change — fix the bug, nothing else
-- no refactoring
-- no "while I'm here" improvements
-- no new abstractions
-- no changing function signatures
-- no moving code between files
-- preserve exact whitespace/formatting around the fix
+new_imports: []
+new_exports: []
 
-DONE_WHEN:
-- bug is fixed (describe how to verify)
-- lint passes
-- types pass
-- existing tests pass
-- no unrelated files changed
+constraints:
+  - MINIMAL change — fix the bug, nothing else
+  - no refactoring
+  - "no 'while I'm here' improvements"
+  - no new abstractions
+  - no changing function signatures
+  - no moving code between files
+  - preserve exact whitespace/formatting around the fix
+
+done_when:
+  - "bug is fixed: [describe how to verify]"
+  - lint passes
+  - types pass
+  - existing tests pass
+  - no unrelated files changed

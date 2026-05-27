@@ -1,29 +1,37 @@
-TASK: refactor
+file: "[directory or file path]"
+action: modify
+purpose: "[what this refactor achieves — must be a concrete improvement, not 'clean up']"
 
-TARGET: [directory or file path]
+depends_on: []
 
-CREATE: [new files if splitting, or none]
+context: |
+  [Why this refactor is needed. What's wrong with the current structure.]
 
-PURPOSE: [what this refactor achieves — must be a concrete improvement, not "clean up"]
+modifications:
+  - "[step 1: specific mechanical transformation]"
+  - "[step 2: what moves where]"
+  - "[step 3: how references are updated]"
+  - "update all imports that reference moved code"
+  - "update barrel/index exports"
 
-BEHAVIOR:
-- [step 1: specific mechanical transformation]
-- [step 2: what moves where]
-- [step 3: how references are updated]
-- update all imports that reference moved code
-- update barrel/index exports
+location_hints:
+  - "[where the code currently lives]"
+  - "[where the code is moving to]"
 
-CONSTRAINTS:
-- NO behavior changes — pure mechanical restructuring
-- all existing tests must pass without modification
-- no new features smuggled in
-- no renaming unless specified
-- every moved piece must have a clear destination
-- if in doubt about where something goes, ASK
+new_imports: []
+new_exports: []
 
-DONE_WHEN:
-- lint passes
-- types pass
-- ALL existing tests pass (not just targeted ones)
-- no behavior change (same public API)
-- git diff shows only moves/renames, no logic changes
+constraints:
+  - NO behavior changes — pure mechanical restructuring
+  - all existing tests must pass without modification
+  - no new features smuggled in
+  - no renaming unless specified
+  - every moved piece must have a clear destination
+  - if in doubt about where something goes, ASK
+
+done_when:
+  - lint passes
+  - types pass
+  - ALL existing tests pass (not just targeted ones)
+  - no behavior change (same public API)
+  - "git diff shows only moves/renames, no logic changes"

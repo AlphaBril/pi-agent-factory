@@ -1,45 +1,37 @@
-TASK: implement_module
+file: "[directory/new-file.ts]"
+action: create
+purpose: "[describe what this module does in one sentence]"
 
-TARGET: src/modules
+depends_on: []
 
-CREATE: ExampleModule
+context: |
+  [Why this module is needed, what calls it, where it fits in the architecture]
 
-PURPOSE: [describe what this module does in one sentence]
+modifications:
+  - "Create class/module [Name] extending [BaseClass]"
+  - "Implement [method1]() — [what it does]"
+  - "Implement [method2]() — [what it does]"
+  - "Add named export"
 
-EXTENDS: BaseModule
+location_hints: []
 
-IMPLEMENTS:
-- Configurable
-- Disposable
+new_imports:
+  - "import { BaseClass } from './base'"
+  - "import type { Config } from '../types'"
 
-PARAMS:
-- config: ModuleConfig
-- logger: Logger
+new_exports:
+  - "[ModuleName]"
 
-PUBLIC_METHODS:
-- initialize() — set up resources
-- process(input: Input) — process a single input item
-- shutdown() — clean up resources
+constraints:
+  - follow lint rules
+  - follow neighboring module style
+  - no new abstractions beyond what's specified
+  - no refactoring existing code
+  - no unrelated edits
+  - no external dependencies
 
-BEHAVIOR:
-- initialize() creates internal state from config
-- process() validates input, transforms it, returns result
-- shutdown() flushes buffers and releases handles
-- all errors are caught and logged, not thrown
-
-OVERRIDES:
-- getName() — return module identifier
-
-CONSTRAINTS:
-- follow lint rules
-- follow neighboring module style
-- no new abstractions
-- no refactoring existing code
-- no unrelated edits
-- no external dependencies
-
-DONE_WHEN:
-- lint passes
-- types pass
-- exports added to index
-- module can be instantiated with mock dependencies
+done_when:
+  - lint passes
+  - types pass
+  - exports added to index
+  - module can be instantiated with mock dependencies

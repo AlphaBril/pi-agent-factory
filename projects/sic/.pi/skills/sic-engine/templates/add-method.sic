@@ -1,32 +1,34 @@
-TASK: add_method
+file: "[directory/file.ts]"
+action: modify
+purpose: "[what this method does]"
 
-TARGET: [directory path]
+depends_on: []
 
-CREATE: [none — modifying existing file]
+context: |
+  [Why this method is needed, what calls it]
 
-PURPOSE: [what this method does]
+modifications:
+  - "Add method [methodName]([params]): [returnType]"
+  - "[step 1 of behavior]"
+  - "[step 2 of behavior]"
 
-PARAMS:
-- [method parameters]
+location_hints:
+  - "Add after [existing method name] (around line N)"
 
-PUBLIC_METHODS:
-- [methodName]() — [description]
+new_imports: []
 
-BEHAVIOR:
-- [step 1]
-- [step 2]
-- [step N]
+new_exports: []
 
-CONSTRAINTS:
-- follow lint rules
-- follow existing methods' style in the same file
-- no refactoring existing code
-- no changing existing method signatures
-- no unrelated edits
-- no new files
+constraints:
+  - follow lint rules
+  - follow existing methods' style in the same file
+  - no refactoring existing code
+  - no changing existing method signatures
+  - no unrelated edits
+  - no new files
 
-DONE_WHEN:
-- lint passes
-- types pass
-- existing tests still pass
-- new method is callable from outside the class
+done_when:
+  - lint passes
+  - types pass
+  - existing tests still pass
+  - new method is callable from outside the class
